@@ -517,6 +517,10 @@ jobs:
             pnpm install --frozen-lockfile
           fi
 
+      - name: Install pinned Claude test CLI
+        if: matrix.group == 'general-workspaces-b'
+        run: bash scripts/install-claude-test-cli.sh
+
       - name: Run grouped general test suites through Turbo
         if: hashFiles('turbo.json', '.github/actions/run-ci-task/action.yml') != ''
         uses: ./.github/actions/run-ci-task
