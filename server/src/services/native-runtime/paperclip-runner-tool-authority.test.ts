@@ -19,8 +19,8 @@ import {
   issueThreadInteractions,
   issues,
 } from "@paperclipai/db";
-import { startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { createDatabaseResponseCapture, installDatabaseResponseCapture } from "@paperclipai/db/response-capture";
+import { startRecoveryPostgres } from "../../__tests__/helpers/recovery-postgres.js";
 import { initializeRunIdentity, reserveSteeredIdentity, reconcileSteeredIdentity } from "../run-identity.js";
 import { documentService } from "../documents.js";
 import { issueService } from "../issues.js";
@@ -36,7 +36,7 @@ import { CAPABILITY_SEMANTIC_TOOL_CATALOG, runnerCodexDynamicToolsFit } from "..
 describe("PaperclipRunnerToolAuthority", () => {
   const credentialDocumentBody = "Use a secret manager for credential handling.\nAuthorization: Bearer intentional-document-credential";
   let temporary: Awaited<
-    ReturnType<typeof startEmbeddedPostgresTestDatabase>
+    ReturnType<typeof startRecoveryPostgres>
   > | null = null;
   let db: ReturnType<typeof createDb>;
   const companyId = "00000000-0000-4000-8000-000000000101";
@@ -51,7 +51,7 @@ describe("PaperclipRunnerToolAuthority", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   beforeAll(async () => {
-    temporary = await startEmbeddedPostgresTestDatabase(
+    temporary = await startRecoveryPostgres(
       "paperclip-runner-tools-",
     );
     db = createDb(temporary.connectionString);
@@ -1676,5 +1676,29 @@ describe("PaperclipRunnerToolAuthority", () => {
         arguments: {},
       }),
     ).rejects.toThrow("paperclip_runner_tool_binding_not_authorized");
+  });
+});
+
+describe("deliverable tool location guidance", () => {
+  const binding = { companyId: "company", agentId: "agent", issueId: "issue", runId: "run", workspaceRoot: "/task-workspace", apiToolsEnabled: false };
+  const db = new Proxy({} as ConstructorParameters<typeof PaperclipRunnerToolAuthority>[0], {
+    get() { throw new Error("Tool definitions must not query the database"); },
+  });
+  it.each(["local", "remote"] as const)("directs %s workspace-only deliverables to the task cwd", (executionTargetKind) => {
+    const authority = new PaperclipRunnerToolAuthority(db, { ...binding, executionTargetKind,
+      ...(executionTargetKind === "remote" ? { readRemoteWorkspaceFile: async () => Buffer.alloc(0) } : {}),
+    });
+    const tool = authority.definitions().find(tool => tool.name === "register_deliverable")!;
+    const description = (tool.inputSchema as { properties: { contentRef: { description: string } } }).properties.contentRef.description;
+    expect(description).toContain("get_workspace.cwd");
+    expect(description).toContain("AGENT_HOME");
+    expect(description).toContain("Create or copy");
+  });
+  it("preserves the granted-location reader contract", () => {
+    const authority = new PaperclipRunnerToolAuthority(db, { ...binding, executionTargetKind: "remote", readRemoteTaskFile: async () => Buffer.alloc(0) });
+    const tool = authority.definitions().find(tool => tool.name === "register_deliverable")!;
+    const description = (tool.inputSchema as { properties: { contentRef: { description: string } } }).properties.contentRef.description;
+    expect(description).toContain("absolute within a location granted to this task");
+    expect(description).toContain("including its agent home");
   });
 });
