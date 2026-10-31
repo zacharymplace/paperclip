@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { agents, budgetPolicies, budgetReservations, companies, costEvents, createDb, heartbeatRuns, type Db } from "@paperclipai/db";
+import { agents, budgetPolicies, budgetReservations, companies, costEvents, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, heartbeatRuns, type Db } from "@paperclipai/db";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { computeObservedSpend } from "../services/budgets.js";
 import { accountRunCost } from "../services/run-cost-accounting.js";
@@ -18,12 +18,12 @@ const support = await getEmbeddedPostgresTestSupport();
   beforeAll(async () => {
     database = await startEmbeddedPostgresTestDatabase("budget-live-attempts-");
     db = createDb(database.connectionString);
-  }, 60_000);
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
   afterEach(async () => {
     await db.execute(sql`TRUNCATE companies CASCADE`);
     for (const directory of directories.splice(0)) await fs.rm(directory, { force: true, recursive: true });
   });
-  afterAll(async () => { await database?.cleanup(); });
+  afterAll(async () => { await db?.$client.end({ timeout: 1 }); await database?.cleanup(); }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
 
   async function fixture(rejectedZero = true) {
     const companyId = randomUUID(), agentId = randomUUID(), runId = randomUUID();

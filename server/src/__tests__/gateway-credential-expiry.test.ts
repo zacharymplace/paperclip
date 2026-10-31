@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { activityLog, agents, companies, createDb, heartbeatRuns, toolAccessAuditEvents, toolGatewaySessions,
-  toolMcpGateways, toolMcpGatewayTokens, toolProfiles } from "@paperclipai/db";
+import { agents, companies, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, heartbeatRuns, toolGatewaySessions,
+  toolMcpGatewayTokens, toolProfiles } from "@paperclipai/db";
 import { createToolGatewayService } from "../services/tool-gateway.js";
 import { createDeliveryWorkCoordinator } from "../services/delivery-work-coordinator.js";
 import { registerGatewayCredentialExpiryWork } from "../services/gateway-credential-expiry-work.js";
@@ -24,10 +24,10 @@ describe.skipIf(!supported)("gateway credential expiry", () => {
 
   beforeAll(async () => {
     if (!external) temporary = await startEmbeddedPostgresTestDatabase("gateway-expiry-");
-    db = createDb(external ?? temporary!.connectionString, { maxConnections: 6, idleTimeoutSeconds: 0, maxLifetimeSeconds: 0 });
-  }, 90_000);
-  afterAll(async () => { await db?.$client.end({ timeout: 1 }); await temporary?.cleanup(); });
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
+  afterAll(async () => { await temporary?.cleanup(); }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
   beforeEach(async () => {
+    db = createDb(external ?? temporary!.connectionString, { maxConnections: 6, idleTimeoutSeconds: 0, maxLifetimeSeconds: 0 });
     await Promise.all(Array.from({ length: 6 }, () => db.execute(sql`select pg_sleep(0.01)`)));
     companyId = randomUUID(); agentId = randomUUID(); runId = randomUUID(); draining = false; errors.length = 0;
     await db.insert(companies).values({ id: companyId, name: "Credential expiry", issuePrefix: "EXP" });
@@ -39,18 +39,17 @@ describe.skipIf(!supported)("gateway credential expiry", () => {
     vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"], shouldAdvanceTime: true });
   });
   afterEach(async () => {
-    await coordinator?.stop(); coordinator = undefined;
-    vi.useRealTimers(); vi.restoreAllMocks();
-    await db.delete(activityLog);
-    await db.delete(toolAccessAuditEvents);
-    await db.delete(toolGatewaySessions);
-    await db.delete(toolMcpGatewayTokens);
-    await db.delete(toolMcpGateways);
-    await db.delete(toolProfiles);
-    await db.delete(heartbeatRuns);
-    await db.delete(agents);
-    await db.delete(companies);
-    expect(errors).toEqual([]);
+    vi.useRealTimers();
+    const activeCoordinator = coordinator; coordinator = undefined;
+    try {
+      await activeCoordinator?.stop();
+      await db.execute(sql`TRUNCATE companies CASCADE`);
+      expect(await db.select({ id: companies.id }).from(companies)).toEqual([]);
+      expect(errors).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      await db?.$client.end({ timeout: 1 });
+    }
   });
   async function start() {
     coordinator = createDeliveryWorkCoordinator({ owner: db, canRun: () => !draining,

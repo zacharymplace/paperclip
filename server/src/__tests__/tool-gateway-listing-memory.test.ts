@@ -5,6 +5,7 @@ import {
   agents,
   companies,
   createDb,
+  EMBEDDED_POSTGRES_TEST_TIMEOUT_MS,
   heartbeatRuns,
   issues,
   principalPermissionGrants,
@@ -44,11 +45,12 @@ describeEmbeddedPostgres("tool gateway listing memory", () => {
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-tool-gateway-listing-");
     db = createDb(tempDb.connectionString);
-  }, 20_000);
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
 
   afterAll(async () => {
+    await db?.$client.end({ timeout: 1 });
     await tempDb?.cleanup();
-  });
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
 
   async function measureNamedGatewayListing(fixture: Awaited<ReturnType<typeof createListingFixture>>) {
     const listing = {
